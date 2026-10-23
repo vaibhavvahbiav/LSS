@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>Linux Panic Button</title>
+<style>
+:root {
+  --bg:#0a0d12; --panel:#121822; --border:#253143;
+  --text:#edf3fc; --muted:#91a0b5; --green:#49e2a0;
+  --cyan:#54c8ff; --orange:#ffb454; --red:#ff647c;
+}
+* { box-sizing:border-box }
+body {
+  margin:0; background:var(--bg); color:var(--text);
+  font:14px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace;
+}
+main { max-width:1200px; margin:auto; padding:30px 22px }
+header { display:flex; justify-content:space-between; gap:16px;
+  align-items:center; flex-wrap:wrap; margin-bottom:28px }
+h1 { font-size:clamp(23px,4vw,34px); margin:0 }
+h1 span { color:var(--green) }
+p { color:var(--muted); margin:5px 0 }
+.pill { border:1px solid var(--border); border-radius:30px;
+  padding:7px 12px; color:var(--green) }
+.grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr));
+  gap:14px }
+.panel { background:var(--panel); border:1px solid var(--border);
+  border-radius:13px; padding:19px; min-width:0 }
+.metric-label { color:var(--muted); font-size:12px; text-transform:uppercase;
+  letter-spacing:1px }
+.value { font-size:clamp(24px,3vw,35px); font-weight:700; margin-top:12px }
+.unit { font-size:13px; color:var(--muted); font-weight:400 }
+.track { height:5px; background:#263243; border-radius:9px;
+  overflow:hidden; margin-top:17px }
+.fill { height:100%; width:0%; background:var(--green);
+  transition:width .3s,background .3s }
+.sub { font-size:12px; color:var(--muted); margin-top:10px }
+.section { margin-top:16px }
+.two { display:grid; grid-template-columns:1.4fr 1fr; gap:14px }
+h2 { font-size:14px; margin:0 0 16px; font-weight:600 }
+canvas { width:100%; height:180px; display:block }
+.stats { display:flex; gap:18px; flex-wrap:wrap; color:var(--muted);
+  margin-bottom:12px; font-size:12px }
+.green { color:var(--green) } .blue { color:var(--cyan) }
+.orange { color:var(--orange) } .red { color:var(--red) }
+.service-list { margin:0; padding-left:20px; color:var(--orange);
+  overflow-wrap:anywhere }
+footer { color:var(--muted); font-size:12px; padding:22px 0 }
+@media(max-width:800px) {
+  .grid { grid-template-columns:repeat(2,minmax(0,1fr)) }
+  .two { grid-template-columns:1fr }
+}
+@media(max-width:430px) {
+  main { padding:18px 12px }
+  .panel { padding:14px }
+  .value { font-size:25px }
+}
+</style>
+</head>
+<body>
+<main>
+<header>
+  <div>
+    <h1>LINUX <span>PANIC BUTTON</span></h1>
+    <p id="host">Initializing system telemetry...</p>
+  </div>
+  <div class="pill" id="health">● CONNECTING</div>
+</header>
+
+<section class="grid">
+  <article class="panel">
+    <div class="metric-label">CPU Load</div>
+    <div class="value" id="cpu">--<span class="unit"> %</span></div>
+    <div class="track"><div class="fill" id="cpu-bar"></div></div>
+    <div class="sub" id="cores">Detecting processors...</div>
+  </article>
+  <article class="panel">
+    <div class="metric-label">Memory</div>
+    <div class="value" id="ram">--<span class="unit"> %</span></div>
+    <div class="track"><div class="fill" id="ram-bar"></div></div>
+    <div class="sub" id="ram-detail">Waiting for measurements...</div>
+  </article>
+  <article class="panel">
+    <div class="metric-label">Root Disk</div>
+    <div class="value" id="disk">--<span class="unit"> %</span></div>
+    <div class="track"><div class="fill" id="disk-bar"></div></div>
+    <div class="sub" id="disk-detail">Checking storage...</div>
+  </article>
+  <article class="panel">
+    <div class="metric-label">System Uptime</div>
+    <div class="value" id="uptime">--</div>
+    <div class="sub">Since last boot</div>
+    <div class="sub" id="updated">Waiting for first sample...</div>
+  </article>
+</section>
+
+<section class="two section">
+  <article class="panel">
+    <h2>CPU / MEMORY HISTORY</h2>
+    <div class="stats">
+      <span class="green">● CPU</span>
+      <span class="blue">● MEMORY</span>
+      <span>Last 60 samples</span>
+    </div>
+    <canvas id="history"></canvas>
+  </article>
+  <article class="panel">
+    <h2>NETWORK THROUGHPUT</h2>
+    <div class="stats">
+      <span class="green">↓ <span id="download">--</span></span>
+      <span class="blue">↑ <span id="upload">--</span></span>
+    </div>
+    <canvas id="traffic"></canvas>
+    <div class="sub">Interface traffic across the whole machine</div>
+  </article>
+</section>
+
+<section class="two section">
+  <article class="panel">
+    <h2>SYSTEM SERVICES</h2>
+    <div id="service-status">Waiting for service check...</div>
+    <ul id="failed" class="service-list"></ul>
+    <div class="sub">Failed systemd units, if any</div>
+  </article>
+  <article class="panel">
+    <h2>DIAGNOSTIC SUMMARY</h2>
+    <div id="verdict">Collecting system telemetry...</div>
+    <div class="sub" id="platform"></div>
+    <div class="sub">Refresh interval: 1 second</div>
+  </article>
+</section>
+
+<footer>
+  LOCAL TELEMETRY · READ-ONLY DIAGNOSTICS · <span id="clock">--</span>
+  <br>Metrics are sampled from the local operating system. Network tests and service checks have limitations.
+</footer>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+const history = [], traffic = [];
+let previousNet = null;
+let busy = false;
+
+function bytes(n) {
+  if (n === undefined || n === null) return "--";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let i = 0;
+  while (n >= 1024 && i < units.length - 1) { n /= 1024; i++; }
+  return n.toFixed(i ? 1 : 0) + " " + units[i];
+}
+function rate(n) { return bytes(n) + "/s"; }
+function duration(n) {
+  const d = Math.floor(n / 86400);
+  const h = Math.floor(n % 86400 / 3600);
+  const m = Math.floor(n % 3600 / 60);
+  return `${d}d ${h}h ${m}m`;
+}
+function bar(id, n, limit) {
+  const el = $(id);
+  el.style.width = Math.min(100, n) + "%";
+  el.style.background = n >= limit ? "var(--red)" :
+                        n >= limit - 15 ? "var(--orange)" : "var(--green)";
+}
+function setHealth(status) {
+  const el = $("health");
+  el.textContent = status === "OK" ? "● ALL CLEAR" :
+                   status === "WARN" ? "● NEEDS ATTENTION" : "● CHECK UNKNOWN";
+  el.style.color = status === "OK" ? "var(--green)" :
+                   status === "WARN" ? "var(--red)" : "var(--orange)";
+}
+function draw(id, series, maxValue) {
+  const canvas = $(id);
+  const rect = canvas.getBoundingClientRect();
+  if (!rect.width) return;
+  const scale = window.devicePixelRatio || 1;
+  canvas.width = Math.round(rect.width * scale);
+  canvas.height = Math.round(180 * scale);
+  const ctx = canvas.getContext("2d");
+  ctx.scale(scale, scale);
+  const w = rect.width, h = 180;
+  const pad = 12;
+  ctx.clearRect(0, 0, w, h);
+
+  for (let j = 0; j <= 4; j++) {
+    const y = pad + (h - 2 * pad) * j / 4;
+    ctx.strokeStyle = "#263143";
+    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke();
+  }
+
+  series.forEach(s => {
+    if (!s.values.length) return;
+    ctx.strokeStyle = s.color;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    s.values.forEach((v, i) => {
+      const x = s.values.length === 1 ? w :
+        i * w / (Math.max(60, s.values.length) - 1);
+      const y = h - pad - Math.min(1, v / maxValue) * (h - 2 * pad);
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+  });
+}
+function renderCharts() {
+  draw("history", [
+    {values:history.map(x => x.cpu), color:"#49e2a0"},
+    {values:history.map(x => x.ram), color:"#54c8ff"}
+  ], 100);
+  const max = Math.max(1024, ...traffic.flatMap(x => [x.down, x.up]));
+  draw("traffic", [
+    {values:traffic.map(x => x.down), color:"#49e2a0"},
+    {values:traffic.map(x => x.up), color:"#54c8ff"}
+  ], max);
+}
+async function refresh() {
+  if (busy) return;
+  busy = true;
+  try {
+    const response = await fetch("/api/metrics", {cache:"no-store"});
+    if (!response.ok) throw new Error("HTTP " + response.status);
+    const d = await response.json();
+
+    $("host").textContent = d.hostname + " · " + d.platform;
+    $("platform").textContent = d.platform;
+    $("cpu").innerHTML = d.cpu.percent.toFixed(1) + '<span class="unit"> %</span>';
+    $("ram").innerHTML = d.memory.percent.toFixed(1) + '<span class="unit"> %</span>';
+    $("disk").innerHTML = d.disk.percent.toFixed(1) + '<span class="unit"> %</span>';
+    $("cores").textContent = d.cpu.logical_cores + " logical processors";
+    $("ram-detail").textContent = bytes(d.memory.used) + " / " + bytes(d.memory.total);
+    $("disk-detail").textContent = bytes(d.disk.free) + " free / " + bytes(d.disk.total);
+    $("uptime").textContent = duration(d.uptime_seconds);
+    $("updated").textContent = "App running " + duration(d.app_uptime_seconds);
+
+    bar("cpu-bar", d.cpu.percent, 85);
+    bar("ram-bar", d.memory.percent, 85);
+    bar("disk-bar", d.disk.percent, 90);
+
+    $("download").textContent = rate(d.network.download_bps);
+    $("upload").textContent = rate(d.network.upload_bps);
+
+    history.push({cpu:d.cpu.percent, ram:d.memory.percent});
+    traffic.push({down:d.network.download_bps, up:d.network.upload_bps});
+    if (history.length > 60) history.shift();
+    if (traffic.length > 60) traffic.shift();
+
+    const service = d.services;
+    $("service-status").textContent = service.message;
+    $("service-status").className = service.status === "OK" ? "green" :
+      service.status === "WARN" ? "orange" : "red";
+    $("failed").replaceChildren();
+    service.failed.forEach(name => {
+      const li = document.createElement("li");
+      li.textContent = name;
+      $("failed").appendChild(li);
+    });
+
+    setHealth(d.status);
+    $("verdict").textContent = d.status === "OK"
+      ? "Your machine is holding it together."
+      : d.status === "WARN"
+      ? "Something needs attention. Inspect the metrics."
+      : "Some diagnostics could not complete.";
+    $("updated").textContent = "Updated " + new Date(d.timestamp).toLocaleTimeString();
+    $("clock").textContent = new Date().toLocaleTimeString();
+    renderCharts();
+  } catch (error) {
+    setHealth("UNKNOWN");
+    $("verdict").textContent = "Dashboard disconnected: " + error.message;
+  } finally {
+    busy = false;
+  }
+}
+
+refresh();
+setInterval(refresh, 1000);
+window.addEventListener("resize", renderCharts);
+</script>
+</body>
+</html>
