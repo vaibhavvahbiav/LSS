@@ -47,6 +47,27 @@ canvas { width:100%; height:180px; display:block }
 .orange { color:var(--orange) } .red { color:var(--red) }
 .service-list { margin:0; padding-left:20px; color:var(--orange);
   overflow-wrap:anywhere }
+.scanner { position:relative; overflow:hidden; }
+.scanner::after { content:""; position:absolute; width:220px; height:220px;
+  right:-100px; top:-135px; border:1px solid #49e2a033; border-radius:50%;
+  box-shadow:0 0 0 22px #49e2a010,0 0 0 44px #49e2a008; pointer-events:none }
+.scan-controls { display:flex; gap:10px; flex-wrap:wrap; align-items:center;
+  margin-bottom:16px }
+.scan-controls select,.scan-controls button { color:var(--text);
+  background:#0b1119; border:1px solid var(--border); border-radius:8px;
+  padding:10px 12px; font:inherit }
+.scan-controls select { min-width:220px }
+.scan-controls button { color:var(--green); border-color:#49e2a066;
+  cursor:pointer; font-weight:700 }
+.scan-controls button:disabled { opacity:.55; cursor:wait }
+.scan-state { color:var(--muted); font-size:12px }
+.device-table { width:100%; border-collapse:collapse; text-align:left }
+.device-table th { color:var(--muted); font-size:11px; text-transform:uppercase;
+  letter-spacing:1px; font-weight:500 }
+.device-table th,.device-table td { border-bottom:1px solid var(--border);
+  padding:10px 8px }
+.device-table td:first-child { color:var(--green); font-weight:700 }
+.empty-row { color:var(--muted); text-align:center }
 footer { color:var(--muted); font-size:12px; padding:22px 0 }
 @media(max-width:800px) {
   .grid { grid-template-columns:repeat(2,minmax(0,1fr)) }
@@ -117,6 +138,24 @@ footer { color:var(--muted); font-size:12px; padding:22px 0 }
   </article>
 </section>
 
+<section class="section">
+  <article class="panel scanner">
+    <h2>LOCAL NETWORK DISCOVERY</h2>
+    <p>Probe devices on a directly connected private subnet.</p>
+    <div class="scan-controls">
+      <select id="network-select" aria-label="Local network">
+        <option value="">Finding local networks...</option>
+      </select>
+      <button id="scan-button" type="button" onclick="scanNetwork()">⌕ SCAN NETWORK</button>
+      <span id="scan-state" class="scan-state">Scans use one ICMP echo per address.</span>
+    </div>
+    <table class="device-table">
+      <thead><tr><th>Address</th><th>Hardware address</th><th>State</th></tr></thead>
+      <tbody id="devices"><tr><td colspan="3" class="empty-row">No scan run yet</td></tr></tbody>
+    </table>
+  </article>
+</section>
+
 <section class="two section">
   <article class="panel">
     <h2>SYSTEM SERVICES</h2>
@@ -143,6 +182,7 @@ const $ = id => document.getElementById(id);
 const history = [], traffic = [];
 let previousNet = null;
 let busy = false;
+let localNetworks = [];
 
 function bytes(n) {
   if (n === undefined || n === null) return "--";
@@ -216,6 +256,78 @@ function renderCharts() {
     {values:traffic.map(x => x.up), color:"#54c8ff"}
   ], max);
 }
+async function loadNetworks() {
+  const select = $("network-select");
+  try {
+    const response = await fetch("/api/networks", {cache:"no-store"});
+    if (!response.ok) throw new Error("Could not list local networks");
+    localNetworks = await response.json();
+    select.replaceChildren();
+    if (!localNetworks.length) {
+      select.add(new Option("No private network found", ""));
+      $("scan-button").disabled = true;
+      return;
+    }
+    localNetworks.forEach((network, index) => {
+      const label = `${network.interface} · ${network.cidr}` +
+        (network.scannable ? "" : " · too large");
+      select.add(new Option(label, String(index)));
+    });
+    select.addEventListener("change", updateScanButton);
+    updateScanButton();
+  } catch (error) {
+    select.replaceChildren(new Option("Unable to list local networks", ""));
+    $("scan-state").textContent = error.message;
+    $("scan-button").disabled = true;
+  }
+}
+function updateScanButton() {
+  const network = localNetworks[Number($("network-select").value)];
+  $("scan-button").disabled = !network || !network.scannable;
+}
+async function scanNetwork() {
+  const network = localNetworks[Number($("network-select").value)];
+  if (!network) return;
+  const button = $("scan-button");
+  const state = $("scan-state");
+  button.disabled = true;
+  button.textContent = "◌ SCANNING";
+  state.textContent = `Checking ${network.cidr} on ${network.interface}...`;
+  try {
+    const response = await fetch("/api/scan", {
+      method:"POST", headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({cidr:network.cidr, interface:network.interface}),
+      signal:AbortSignal.timeout(60000)
+    });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || "Scan failed");
+    const body = $("devices");
+    body.replaceChildren();
+    if (!result.devices.length) {
+      const row = body.insertRow();
+      const cell = row.insertCell();
+      cell.colSpan = 3;
+      cell.className = "empty-row";
+      cell.textContent = "No devices answered the ping probe.";
+    } else {
+      result.devices.forEach(device => {
+        const row = body.insertRow();
+        row.insertCell().textContent = device.ip;
+        row.insertCell().textContent = device.mac;
+        const status = row.insertCell();
+        status.textContent = "RESPONDING";
+        status.className = "green";
+      });
+    }
+    state.textContent = `${result.devices.length} device(s) responded · ${result.scanned} addresses checked`;
+  } catch (error) {
+    state.textContent = error.message === "The operation was aborted."
+      ? "Scan timed out. Try a smaller subnet." : error.message;
+  } finally {
+    button.textContent = "⌕ SCAN NETWORK";
+    updateScanButton();
+  }
+}
 async function refresh() {
   if (busy) return;
   busy = true;
@@ -276,6 +388,7 @@ async function refresh() {
 }
 
 refresh();
+loadNetworks();
 setInterval(refresh, 1000);
 window.addEventListener("resize", renderCharts);
 </script>

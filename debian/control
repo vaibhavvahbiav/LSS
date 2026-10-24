@@ -1,9 +1,9 @@
 Package: linux-panic-button
-Version: 1.1.0
+Version: 1.2.0
 Section: admin
 Priority: optional
 Architecture: all
-Depends: python3, python3-flask, python3-psutil, python3-waitress
+Depends: python3, python3-flask, python3-psutil, python3-waitress, iputils-ping
 Maintainer: Linux Panic Button contributors <noreply@example.com>
 Description: Local system health dashboard and read-only diagnostics
  A small Flask dashboard for local CPU, memory, disk, network, uptime, and

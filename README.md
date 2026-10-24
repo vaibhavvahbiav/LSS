@@ -12,7 +12,7 @@ Build the package from the repository root:
 ./build-deb.sh
 ```
 
-This creates `dist/linux-panic-button_1.1.0_all.deb`. Install it with:
+This creates `dist/linux-panic-button_1.2.0_all.deb`. Install it with:
 
 ```sh
 sudo apt install ./dist/linux-panic-button_1.1.0_all.deb
@@ -27,6 +27,10 @@ sudo systemctl enable --now linux-panic-button
 The package also installs the `linux-panic-button` CLI. It prints a diagnostic
 summary and writes JSON to `reports/latest.json` by default; choose another
 destination with `--json /path/to/report.json`.
+
+The dashboard's network discovery section scans only private IPv4 networks
+attached to active local interfaces, with a 1,024-address limit. It uses one
+ICMP ping per address; devices that block ping will not appear.
 
 ## Run from source
 
