@@ -1,0 +1,19 @@
+[Unit]
+Description=Linux Panic Button local monitoring dashboard
+After=network.target
+
+[Service]
+Type=simple
+User=nobody
+Group=nogroup
+WorkingDirectory=/usr/lib/linux-panic-button
+ExecStart=/usr/bin/waitress-serve --listen=127.0.0.1:5000 app:app
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

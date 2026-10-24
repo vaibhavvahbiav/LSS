@@ -5,6 +5,7 @@ import platform
 import shutil
 import socket
 import subprocess
+import threading
 import time
 from datetime import datetime, timezone
 
@@ -16,50 +17,60 @@ app = Flask(__name__)
 STARTED = time.monotonic()
 PREVIOUS_NET = psutil.net_io_counters()
 PREVIOUS_TIME = time.monotonic()
+NETWORK_LOCK = threading.Lock()
+SERVICE_CACHE_TTL = 15
+SERVICE_CACHE_LOCK = threading.Lock()
+SERVICE_CACHE = {"checked_at": 0.0, "value": None}
 
 
 def get_services():
-    if not shutil.which("systemctl"):
-        return {"status": "UNKNOWN", "failed": [], "message": "systemctl unavailable"}
+    now = time.monotonic()
+    with SERVICE_CACHE_LOCK:
+        if SERVICE_CACHE["value"] is not None and now - SERVICE_CACHE["checked_at"] < SERVICE_CACHE_TTL:
+            return SERVICE_CACHE["value"]
 
-    try:
-        result = subprocess.run(
-            ["systemctl", "--failed", "--no-legend", "--plain"],
-            capture_output=True,
-            text=True,
-            timeout=3,
-            check=False,
-        )
+        if not shutil.which("systemctl"):
+            value = {"status": "UNKNOWN", "failed": [], "message": "systemctl unavailable"}
+        else:
+            try:
+                result = subprocess.run(
+                    ["systemctl", "--failed", "--no-legend", "--plain"],
+                    capture_output=True,
+                    text=True,
+                    timeout=3,
+                    check=False,
+                )
 
-        if result.returncode not in (0, 1):
-            return {"status": "UNKNOWN", "failed": [], "message": "Could not inspect services"}
+                if result.returncode not in (0, 1):
+                    value = {"status": "UNKNOWN", "failed": [], "message": "Could not inspect services"}
+                else:
+                    failed = [line.split()[0] for line in result.stdout.splitlines() if line.split()]
+                    value = {
+                        "status": "WARN" if failed else "OK",
+                        "failed": failed,
+                        "message": f"{len(failed)} failed unit(s)" if failed else "No failed units",
+                    }
+            except (OSError, subprocess.TimeoutExpired):
+                value = {"status": "UNKNOWN", "failed": [], "message": "Service check timed out"}
 
-        failed = [
-            line.split()[0]
-            for line in result.stdout.splitlines()
-            if line.split()
-        ]
-        return {
-            "status": "WARN" if failed else "OK",
-            "failed": failed,
-            "message": f"{len(failed)} failed unit(s)" if failed else "No failed units",
-        }
-    except (OSError, subprocess.TimeoutExpired):
-        return {"status": "UNKNOWN", "failed": [], "message": "Service check timed out"}
+        SERVICE_CACHE["checked_at"] = time.monotonic()
+        SERVICE_CACHE["value"] = value
+        return value
 
 
 def get_network():
     global PREVIOUS_NET, PREVIOUS_TIME
 
-    current = psutil.net_io_counters()
-    now = time.monotonic()
-    elapsed = max(now - PREVIOUS_TIME, 0.001)
+    with NETWORK_LOCK:
+        current = psutil.net_io_counters()
+        now = time.monotonic()
+        elapsed = max(now - PREVIOUS_TIME, 0.001)
 
-    download = max(0, current.bytes_recv - PREVIOUS_NET.bytes_recv) / elapsed
-    upload = max(0, current.bytes_sent - PREVIOUS_NET.bytes_sent) / elapsed
+        download = max(0, current.bytes_recv - PREVIOUS_NET.bytes_recv) / elapsed
+        upload = max(0, current.bytes_sent - PREVIOUS_NET.bytes_sent) / elapsed
 
-    PREVIOUS_NET = current
-    PREVIOUS_TIME = now
+        PREVIOUS_NET = current
+        PREVIOUS_TIME = now
 
     return {
         "download_bps": round(download),
